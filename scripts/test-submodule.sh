@@ -5,7 +5,7 @@
 # Lives in the parent repo because the submodule is upstream-owned (euaziel) and we
 # have no push access to it -- it must stay byte-identical to its pinned commit.
 #
-#   ./scripts/test-submodule.sh [tier0|tier1a|tier1b|matrix|tier3|all]
+#   ./scripts/test-submodule.sh [tier0|tier1a|tier1b|matrix|tier2|tier3|all]
 #
 # Tiers are independent; each prints one "TIER n: PASS|FAIL|SKIP" line. Nothing is
 # installed implicitly -- a tier that needs a missing toolchain SKIPs and tells you
@@ -274,6 +274,60 @@ tier1matrix() {
 }
 
 # =============================================================================
+# TIER 2 -- the Python pytest suite.
+#
+# Two groups, split by the working directory their imports require. There is no
+# conftest.py anywhere, so nothing fixes sys.path for you:
+#   A) tests/unit/*      -> `from src.…`     -> cwd must be v1/
+#   B) test_sensing.py   -> `from v1.src.…`  -> cwd must be the submodule root
+# No single cwd collects both.
+#
+# --no-cov is required: pyproject's addopts hard-code --cov=src and
+# --cov-fail-under=100 against a pre-reorg layout that no longer exists, so a
+# bare pytest run collects nothing and then fails the coverage gate anyway.
+# =============================================================================
+tier2() {
+  hdr "TIER 2  Python pytest suite"
+  local venv="$VENVS/api312"
+
+  if [ ! -x "$venv/bin/python" ]; then
+    printf '  %sSKIP%s %s missing (built by the API stack setup).\n' "$Y" "$N" "$venv"
+    record "2" SKIP "api312 venv missing"
+    return 0
+  fi
+
+  export MOCK_HARDWARE=true MOCK_POSE_DATA=true SECRET_KEY=dev-local-testing-key
+
+  local common=(--no-cov -p no:cacheprovider -q -ra
+                -m "not hardware and not gpu and not slow and not network")
+  local a_out b_out a_line b_line
+
+  step "group A -- tests/unit (cwd=v1)"
+  a_out="$( cd "$SUB/v1" && PYTHONPATH=. "$venv/bin/python" -m pytest \
+              "${common[@]}" --ignore=tests/unit/test_sensing.py tests/unit/ 2>&1 || true )"
+  a_line="$( printf '%s' "$a_out" | grep -E '^=+ .*(passed|failed|error)' | tail -1 \
+               | sed 's/^=*[[:space:]]*//; s/[[:space:]]*=*$//' )"
+  note "${a_line:-<no summary line>}"
+
+  step "group B -- test_sensing.py (cwd=submodule root)"
+  b_out="$( cd "$SUB" && PYTHONPATH=. "$venv/bin/python" -m pytest \
+              "${common[@]}" v1/tests/unit/test_sensing.py 2>&1 || true )"
+  b_line="$( printf '%s' "$b_out" | grep -E '^=+ .*(passed|failed|error)' | tail -1 \
+               | sed 's/^=*[[:space:]]*//; s/[[:space:]]*=*$//' )"
+  note "${b_line:-<no summary line>}"
+
+  # Upstream drift: a router fixture omits required config, and some torch
+  # save/load round-trips do not reproduce. These are pre-existing failures in
+  # the vendored code, not regressions we introduced -- so this tier reports
+  # counts rather than gating on zero failures.
+  step "known-failing areas (upstream, not regressions)"
+  printf '%s\n' "$a_out" | grep -E '^(FAILED|ERROR)' \
+    | sed 's/::.*//' | sort | uniq -c | sort -rn | sed 's/^/    /'
+
+  record "2" INFO "A: ${a_line:-?} | B: ${b_line:-?}"
+}
+
+# =============================================================================
 # TIER 3 -- the Rust workspace (~1,037 tests across 15 crates).
 #
 # Runs in a COPY of rust-port/wifi-densepose-rs (3 MB) because the committed
@@ -370,9 +424,10 @@ LOG="$LOGS/${TARGET}-$(date +%Y%m%dT%H%M%S).log"
     tier1a)  tier1a ;;
     tier1b)  tier1b ;;
     matrix)  tier1matrix ;;
+    tier2)   tier2 ;;
     tier3)   tier3 ;;
-    all)     tier0; tier1a; tier1b; tier1matrix; tier3 ;;
-    *) printf 'usage: %s [tier0|tier1a|tier1b|matrix|tier3|all]\n' "$0" >&2; exit 2 ;;
+    all)     tier0; tier1a; tier1b; tier1matrix; tier2; tier3 ;;
+    *) printf 'usage: %s [tier0|tier1a|tier1b|matrix|tier2|tier3|all]\n' "$0" >&2; exit 2 ;;
   esac
 
   hdr "SUMMARY"
