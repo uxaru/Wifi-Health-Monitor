@@ -20,3 +20,9 @@ __pycache__/
 
 # rust workspace copy (Cargo.lock is stale; cargo must be able to rewrite it)
 .rustwork/
+
+# fork working clone (Track 1 patches)
+.forkwork/
+
+# stray fork-verification target dir
+.cargo-target-fork/

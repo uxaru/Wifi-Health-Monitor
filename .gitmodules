@@ -1,3 +1,3 @@
 [submodule "external/wifi-csi-pose"]
 	path = external/wifi-csi-pose
-	url = https://github.com/euaziel/WiFi-CSI-Human-Pose-Detection.git
+	url = https://github.com/uxaru/WiFi-CSI-Human-Pose-Detection.git
