@@ -1,0 +1,16 @@
+# Python virtualenvs used to test the submodule (see scripts/test-submodule.sh)
+.venvs/
+
+# Rust build tree, if CARGO_TARGET_DIR is pointed here for a future Tier 3
+.cargo-target/
+
+# Tier output captures
+logs/
+*.log
+
+# Python cruft
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+.DS_Store
