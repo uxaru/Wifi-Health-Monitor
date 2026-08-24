@@ -17,3 +17,6 @@ __pycache__/
 
 # stack.sh pid files
 .run/
+
+# rust workspace copy (Cargo.lock is stale; cargo must be able to rewrite it)
+.rustwork/

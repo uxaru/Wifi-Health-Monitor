@@ -5,7 +5,7 @@
 # Lives in the parent repo because the submodule is upstream-owned (euaziel) and we
 # have no push access to it -- it must stay byte-identical to its pinned commit.
 #
-#   ./scripts/test-submodule.sh [tier0|tier1a|tier1b|all]
+#   ./scripts/test-submodule.sh [tier0|tier1a|tier1b|matrix|tier3|all]
 #
 # Tiers are independent; each prints one "TIER n: PASS|FAIL|SKIP" line. Nothing is
 # installed implicitly -- a tier that needs a missing toolchain SKIPs and tells you
@@ -273,6 +273,60 @@ tier1matrix() {
   record "1m" INFO "hash matrix tabulated"
 }
 
+# =============================================================================
+# TIER 3 -- the Rust workspace (~1,037 tests across 15 crates).
+#
+# Runs in a COPY of rust-port/wifi-densepose-rs (3 MB) because the committed
+# Cargo.lock is stale: `cargo --locked` refuses it, and letting cargo refresh
+# the lock in place would dirty the submodule. Only version pins differ; the
+# package set is identical.
+#
+# --no-default-features is required -- defaults pull tch (libtorch) and ort
+# (ONNX Runtime), which need native libraries we do not have.
+# =============================================================================
+tier3() {
+  hdr "TIER 3  Rust workspace"
+
+  local CARGO="$HOME/.cargo/bin/cargo"
+  if [ ! -x "$CARGO" ]; then
+    printf '  %sSKIP%s Rust not installed. To enable this tier:\n' "$Y" "$N"
+    note "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \\"
+    note "    | sh -s -- -y --profile minimal --default-toolchain stable --no-modify-path"
+    record "3" SKIP "cargo not installed"
+    return 0
+  fi
+
+  local work="$REPO_ROOT/.rustwork"
+  local ws="$work/wifi-densepose-rs"
+  step "syncing workspace copy -> $ws"
+  rm -rf "$work"; mkdir -p "$work"
+  cp -R "$SUB/rust-port/wifi-densepose-rs" "$work/"
+
+  export CARGO_TARGET_DIR="$REPO_ROOT/.cargo-target"
+  local log="$LOGS/rust-tests.log"
+
+  step "cargo test --workspace --no-default-features   (first run: ~15 min)"
+  local rc=0
+  ( cd "$ws" && "$CARGO" test --workspace --no-default-features ) >"$log" 2>&1 || rc=$?
+
+  local passed failed ignored bins
+  read -r passed failed ignored bins <<< "$(
+    grep '^test result:' "$log" \
+      | awk '{p+=$4; f+=$6; i+=$8} END {print p+0, f+0, i+0, NR+0}'
+  )"
+  note "passed=$passed  failed=$failed  ignored=$ignored  across $bins test binaries"
+
+  if [ "$rc" -eq 0 ] && [ "${failed:-1}" -eq 0 ] && [ "${passed:-0}" -gt 0 ]; then
+    ok "cargo test exited 0 with 0 failures"
+    record "3" PASS "$passed passed, 0 failed"
+  else
+    bad "cargo test failed (exit=$rc)"
+    grep -E '^failures:|^error\[E|error: could not compile' "$log" | head -10 | sed 's/^/       /'
+    record "3" FAIL "exit=$rc, $failed failed"
+  fi
+  note "full log: $log"
+}
+
 # Shared proof runner: prepend the venv to PATH (./verify resolves python3 off PATH)
 # and check the verdict, the hash, and the exit code.
 run_proof() { # run_proof <venv> <tier-label> <caveat>
@@ -316,8 +370,9 @@ LOG="$LOGS/${TARGET}-$(date +%Y%m%dT%H%M%S).log"
     tier1a)  tier1a ;;
     tier1b)  tier1b ;;
     matrix)  tier1matrix ;;
-    all)     tier0; tier1a; tier1b; tier1matrix ;;
-    *) printf 'usage: %s [tier0|tier1a|tier1b|matrix|all]\n' "$0" >&2; exit 2 ;;
+    tier3)   tier3 ;;
+    all)     tier0; tier1a; tier1b; tier1matrix; tier3 ;;
+    *) printf 'usage: %s [tier0|tier1a|tier1b|matrix|tier3|all]\n' "$0" >&2; exit 2 ;;
   esac
 
   hdr "SUMMARY"
